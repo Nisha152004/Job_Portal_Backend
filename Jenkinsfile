@@ -13,64 +13,76 @@ pipeline {
   stages {
     stage('Checkout') {
       steps {
-        echo "📦 Checking out source code..."
+        echo "📦 Checking out backend source..."
         checkout scm
       }
     }
 
-    stage('Install Dependencies') {
+    stage('Environment Setup') {
       steps {
-        echo "📥 Installing npm packages..."
-        sh 'npm install'
+        echo "🐍 Setting up Python virtual environment..."
+        sh 'python3 -m venv .venv'
       }
     }
 
-    stage('Build Project') {
+    stage('Install Requirements') {
       steps {
-        echo "🏗️ Building the frontend..."
-        sh 'npm run build'
+        echo "📥 Installing dependencies..."
+        sh '.venv/bin/pip install --upgrade pip'
+        sh '.venv/bin/pip install -r requirements.txt'
       }
     }
 
-    stage('Run Tests') {
+    stage('Database Migrations') {
       steps {
-        echo "🧪 Running unit tests..."
-        sh 'npm test || true'
+        echo "🗄️ Running Django migrations..."
+        sh '.venv/bin/python manage.py makemigrations'
+        sh '.venv/bin/python manage.py migrate'
       }
     }
 
-    stage('Archive Build') {
+    stage('Unit Tests') {
       steps {
-        echo "📦 Archiving build artifacts..."
-        archiveArtifacts artifacts: 'dist/**', fingerprint: true
+        echo "🧪 Running Django unit tests..."
+        sh '.venv/bin/python manage.py test'
       }
     }
 
-    stage('Deploy') {
+    stage('Start Server') {
       steps {
-        echo "🚀 Triggering deployment API..."
-        withCredentials([
-          string(credentialsId: params.DEPLOY_URL_CRED_ID, variable: 'DEPLOY_URL'),
-          string(credentialsId: params.DEPLOY_KEY_CRED_ID, variable: 'DEPLOY_KEY')
-        ]) {
-          sh '''
-            json_payload=$(printf '{"applicationId":"%s"}' "$APP_ID")
-            curl -fS -X POST \
-              "$DEPLOY_URL" \
-              -H 'accept: application/json' \
-              -H 'Content-Type: application/json' \
-              -H "x-api-key: $DEPLOY_KEY" \
-              --data-binary "$json_payload" \
-              -w "\\nHTTP %{http_code}\\n"
-          '''
-        }
+        echo "🚀 Starting development server (temporary)..."
+        sh '.venv/bin/python manage.py runserver 0.0.0.0:8000 &'
+        sh 'sleep 5'
+      }
+    }
+
+    stage('API Test') {
+      steps {
+        echo "🔍 Running API test script..."
+        sh '.venv/bin/python check.py'
       }
     }
   }
 
   post {
     success {
-      echo "✅ Build and deployment completed successfully!"
+      echo "✅ Tests passed, triggering deployment..."
+      withCredentials([
+        string(credentialsId: params.DEPLOY_URL_CRED_ID, variable: 'DEPLOY_URL'),
+        string(credentialsId: params.DEPLOY_KEY_CRED_ID, variable: 'DEPLOY_KEY')
+      ]) {
+        sh '''
+          json_payload=$(printf '{"applicationId":"%s"}' "$APP_ID")
+          curl -fS -X POST \
+            "$DEPLOY_URL" \
+            -H 'accept: application/json' \
+            -H 'Content-Type: application/json' \
+            -H "x-api-key: $DEPLOY_KEY" \
+            --data-binary "$json_payload" \
+            -w "\\nHTTP %{http_code}\\n"
+        '''
+      }
+
       mail to: 'xaioene@gmail.com',
            subject: "✅ Jenkins Success: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
            body: """Hello,
@@ -83,7 +95,7 @@ The Jenkins pipeline for ${env.JOB_NAME} (build #${env.BUILD_NUMBER}) completed 
 
 Deployment API triggered successfully.
 
-Best,  
+Regards,  
 Jenkins 🤖
 """
     }
@@ -92,7 +104,7 @@ Jenkins 🤖
       echo "❌ Pipeline failed, sending error email..."
       mail to: 'xaioene@gmail.com',
            subject: "❌ Jenkins Failure: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-           body: """Hello,
+           body: """Hey there,
 
 The Jenkins pipeline for ${env.JOB_NAME} (build #${env.BUILD_NUMBER}) has failed.
 
@@ -100,10 +112,9 @@ The Jenkins pipeline for ${env.JOB_NAME} (build #${env.BUILD_NUMBER}) has failed
 * Commit: ${env.GIT_COMMIT}
 * Build URL: ${env.BUILD_URL}
 
-Please check the Jenkins console output for details.
+Please check the console output for details.
 
-Regards,  
-Jenkins 🧠
+– Jenkins 🧠
 """
     }
   }
